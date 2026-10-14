@@ -721,7 +721,7 @@ function handleFix(f){
   if (G.smooth < 0.45) G.smooth = 0; // ignore standing-still drift (< ~1.6 km/h)
   G.raw = raw; G.acc = f.acc; G.wall = Date.now(); G.last = f;
   setGps(f.acc <= 10 ? 'good' : f.acc <= 25 ? 'fair' : 'weak');
-  if (R && !R.paused) recordFix(f, raw);
+  if (R && !R.paused) recordFix(f, raw, hasDop);
   runAlerts(conv(G.smooth));
   render();
 }
@@ -752,7 +752,7 @@ function simStop(){ if (SIM.timer){ clearInterval(SIM.timer); SIM.timer = null; 
 var R = null, autosaveTimer = null, lastGapToast = 0;
 function elapsed(r){ var now = Date.now(); return (now - r.start - r.pausedTotal - (r.paused ? now - r.pauseStart : 0))/1000; }
 
-function recordFix(f, raw){
+function recordFix(f, raw, hasDop){
   var now = Date.now();
   var dt = R.lastT ? Math.max(0, (f.t - R.lastT)/1000) : 0;
   var moving = G.smooth > 1.0 || raw > 1.5;   // above ~4-5 km/h
@@ -774,7 +774,14 @@ function recordFix(f, raw){
     if (Math.round(conv(G.smooth)) > S.limit) R.over += Math.min(dt, 5);
     if (dt > 12 && now - lastGapToast > 60000){ lastGapToast = now; toast('GPS was interrupted for ' + Math.round(dt) + ' seconds. Keep the screen on for the most accurate tracking.', 5200); }
   }
-  if (f.acc <= 25 && R.fixes >= 2 && G.smooth > R.max) R.max = G.smooth;
+  // Top speed: use the phone's raw GPS speed (no smoothing), but only when two readings in a row
+  // agree, so a single glitch can't count. Taking the lower of the two keeps it honest.
+  // Phones without a direct speed reading fall back to the smoothed speed.
+  var top = hasDop ? 0 : G.smooth;
+  if (hasDop && R.prevRaw != null && f.t - R.prevRawT <= 2500 && R.prevRawAcc <= 25 && f.acc <= 25 && Math.abs(raw - R.prevRaw) < 4.5)
+    top = Math.min(raw, R.prevRaw);
+  if (f.acc <= 25 && R.fixes >= 2 && top > R.max) R.max = top;
+  if (hasDop){ R.prevRaw = raw; R.prevRawT = f.t; R.prevRawAcc = f.acc; } else R.prevRaw = null;
   R.fixes++; R.lastT = f.t; R.lastFix = f;
   if (!R.lastPt || now - R.lastPt >= 950){
     R.lastPt = now;
@@ -804,7 +811,7 @@ function startRide(){
 function togglePause(){
   if (!R) return;
   var now = Date.now();
-  if (R.paused){ R.pausedTotal += now - R.pauseStart; R.paused = false; R.seg++; R.anchor = null; R.lastT = null; R.lastFix = null; lockScreen(); }
+  if (R.paused){ R.pausedTotal += now - R.pauseStart; R.paused = false; R.seg++; R.anchor = null; R.lastT = null; R.lastFix = null; R.prevRaw = null; lockScreen(); }
   else { R.paused = true; R.pauseStart = now; unlockScreen(); }
   vib(30); saveActive(); render();
   if (NATIVE) NATIVE.live.update(liveState());
