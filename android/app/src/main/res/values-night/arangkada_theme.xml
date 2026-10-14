@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Night: graphite background, light status bar icons -->
+    <color name="arangkada_window">#0F141B</color>
+    <bool name="arangkada_light_bars">false</bool>
+</resources>

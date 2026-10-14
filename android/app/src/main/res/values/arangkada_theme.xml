@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Background behind the status and navigation bars (matches the app's Day background) -->
+    <color name="arangkada_window">#ECF0F4</color>
+    <!-- Dark status bar icons on the light background -->
+    <bool name="arangkada_light_bars">true</bool>
+</resources>

@@ -1,0 +1,9 @@
+{
+  "appId": "app.arangkada.tracker",
+  "appName": "Arangkada",
+  "webDir": "www",
+  "android": {
+    "useLegacyBridge": true,
+    "adjustMarginsForEdgeToEdge": "auto"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Arangkada Ride Speed Tracker",
+  "short_name": "Arangkada",
+  "description": "Motorcycle speed tracker with voice speed alerts.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#151B23",
+  "theme_color": "#151B23",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

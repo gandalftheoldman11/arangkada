@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Arangkada</string>
+    <string name="title_activity_main">Arangkada</string>
+    <string name="package_name">app.arangkada.tracker</string>
+    <string name="custom_url_scheme">app.arangkada.tracker</string>
+    <!-- Background GPS notification (capacitor-community/background-geolocation) -->
+    <string name="capacitor_background_geolocation_notification_channel_name">Recording rides</string>
+    <string name="capacitor_background_geolocation_notification_icon">drawable/ic_tracking</string>
+    <string name="capacitor_background_geolocation_notification_color">#F5A524</string>
+</resources>
