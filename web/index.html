@@ -137,7 +137,7 @@ h1,h2,h3,p{margin:0}
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;transition:transform .1s,filter .2s}
 .btn-start svg,.btn-pause svg,.btn-stop svg{width:22px;height:22px;flex:none}
 .btn-start{background:linear-gradient(180deg,var(--accent-2),var(--accent-fill));color:var(--accent-ink);
-  box-shadow:0 10px 28px var(--amber-glow),inset 0 1px 0 rgba(255,255,255,.5)}
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
 .btn-start:active,.btn-pause:active{transform:scale(.98)}
 .btn-pause{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
 .btn-stop{position:relative;overflow:hidden;background:var(--surface);border:1.5px solid var(--over);color:var(--over)}
@@ -622,7 +622,7 @@ function runAlerts(v){
 }
 
 /* ================= GPS ================= */
-var G = { watch:null, last:null, smooth:0, raw:0, acc:null, wall:0, state:'off', rejects:0, simOn:false, wanted:false };
+var G = { watch:null, last:null, smooth:0, raw:0, acc:null, wall:0, state:'off', rejects:0, simOn:false, wanted:false, hist:[], lastDop:null, spikes:0 };
 var SIM = { timer:null, t:0, lat:7.0731, lon:125.6128, h:40 };
 
 function setGps(st){
@@ -684,7 +684,7 @@ function clearSource(){
 function gpsHalt(){ // stop sources without forgetting that the user wants GPS
   clearSource();
   simStop();
-  G.last = null; G.smooth = 0; G.raw = 0; G.wall = 0; G.rejects = 0;
+  G.last = null; G.smooth = 0; G.raw = 0; G.wall = 0; G.rejects = 0; G.hist = []; G.lastDop = null; G.spikes = 0;
 }
 function onPos(p){
   var c = p.coords, t = p.timestamp || Date.now();
@@ -712,17 +712,31 @@ function handleFix(f){
   G.rejects = 0;
   var hasDop = typeof f.speed === 'number' && isFinite(f.speed) && f.speed >= 0;
   var raw;
-  if (hasDop) raw = f.speed;                                                   // Doppler speed: most accurate
-  else if (prev && dt > 0 && dt <= 10 && f.acc <= 35 && prev.acc <= 35) raw = d < Math.min(f.acc, prev.acc)*0.4 ? 0 : imp; // fallback: distance / time, ignoring jitter
-  else raw = (prev && dt <= 10) ? G.raw : 0;
+  if (hasDop){
+    // Doppler speed from the GPS chip: the most accurate reading. Used directly, so there's no lag;
+    // the on-screen animation does the smoothing instead.
+    raw = f.speed;
+    // Reject one-off spikes: no motorcycle changes speed by more than ~12 m/s in one second.
+    if (G.lastDop != null && dt > 0 && dt <= 3 && Math.abs(raw - G.lastDop)/dt > 12){
+      if (++G.spikes < 3) raw = G.lastDop; else G.spikes = 0;
+    } else G.spikes = 0;
+    G.lastDop = raw;
+  } else {
+    // No Doppler speed on this phone/fix: distance covered over the last ~3 seconds of good fixes,
+    // which is much steadier than fix-to-fix distance.
+    G.lastDop = null;
+    if (f.acc <= 35) G.hist.push(f);
+    while (G.hist.length > 1 && f.t - G.hist[0].t > 3500) G.hist.shift();
+    var h0 = G.hist[0], span = h0 ? (f.t - h0.t)/1000 : 0;
+    if (h0 && span >= 1.5){ var hd = hav(h0.lat, h0.lon, f.lat, f.lon); raw = hd < Math.min(f.acc, h0.acc)*0.5 ? 0 : hd/span; }
+    else raw = (prev && dt <= 10) ? G.raw : 0;
+  }
   if (raw > MAXV) return;
-  var a = hasDop ? 0.6 : 0.35;
-  G.smooth = (prev && dt <= 10) ? G.smooth + a*(raw - G.smooth) : raw;
-  if (G.smooth < 0.45) G.smooth = 0; // ignore standing-still drift (< ~1.6 km/h)
+  if (raw < 0.5) raw = 0;   // under ~2 km/h is GPS noise while standing still
+  G.smooth = (hasDop || !prev || dt > 10) ? raw : G.smooth + 0.5*(raw - G.smooth);
   G.raw = raw; G.acc = f.acc; G.wall = Date.now(); G.last = f;
   setGps(f.acc <= 10 ? 'good' : f.acc <= 25 ? 'fair' : 'weak');
-  if (R && !R.paused) recordFix(f, raw, hasDop);
-  runAlerts(conv(G.smooth));
+  if (R && !R.paused){ recordFix(f, raw, hasDop); runAlerts(conv(G.smooth)); }   // alerts only during a ride
   render();
 }
 
@@ -757,11 +771,15 @@ function recordFix(f, raw, hasDop){
   var dt = R.lastT ? Math.max(0, (f.t - R.lastT)/1000) : 0;
   var moving = G.smooth > 1.0 || raw > 1.5;   // above ~4-5 km/h
   var good = f.acc <= 30;
-  if (R.anchor){
+  // Distance: add up speed x time between readings. This follows curves and ignores position jitter.
+  // After a GPS gap it falls back to straight-line distance between good fixes.
+  if (R.lastDopV != null && dt > 0 && dt <= 3){ R.dist += (R.lastDopV + raw)/2*dt; if (good) R.anchor = f; }
+  else if (R.anchor){
     var d = hav(R.anchor.lat, R.anchor.lon, f.lat, f.lon), adt = Math.max(0.001, (f.t - R.anchor.t)/1000);
     if (d/adt >= MAXV){ if (good) R.anchor = f; }          // jump (e.g. GPS source switched): don't count it
     else if (good && moving){ R.dist += d; R.anchor = f; }
   } else if (good) R.anchor = f;
+  R.lastDopV = (hasDop || f.acc <= 35) ? raw : null;
 
   if (dt > 0){
     if (moving){
@@ -777,11 +795,12 @@ function recordFix(f, raw, hasDop){
   // Top speed: use the phone's raw GPS speed (no smoothing), but only when two readings in a row
   // agree, so a single glitch can't count. Taking the lower of the two keeps it honest.
   // Phones without a direct speed reading fall back to the smoothed speed.
-  var top = hasDop ? 0 : G.smooth;
+  var top = hasDop ? 0 : Math.min(G.smooth, R.prevSmooth || 0);
   if (hasDop && R.prevRaw != null && f.t - R.prevRawT <= 2500 && R.prevRawAcc <= 25 && f.acc <= 25 && Math.abs(raw - R.prevRaw) < 4.5)
     top = Math.min(raw, R.prevRaw);
   if (f.acc <= 25 && R.fixes >= 2 && top > R.max) R.max = top;
   if (hasDop){ R.prevRaw = raw; R.prevRawT = f.t; R.prevRawAcc = f.acc; } else R.prevRaw = null;
+  R.prevSmooth = G.smooth;
   R.fixes++; R.lastT = f.t; R.lastFix = f;
   if (!R.lastPt || now - R.lastPt >= 950){
     R.lastPt = now;
@@ -811,7 +830,7 @@ function startRide(){
 function togglePause(){
   if (!R) return;
   var now = Date.now();
-  if (R.paused){ R.pausedTotal += now - R.pauseStart; R.paused = false; R.seg++; R.anchor = null; R.lastT = null; R.lastFix = null; R.prevRaw = null; lockScreen(); }
+  if (R.paused){ R.pausedTotal += now - R.pauseStart; R.paused = false; R.seg++; R.anchor = null; R.lastT = null; R.lastFix = null; R.prevRaw = null; R.lastDopV = null; lockScreen(); }
   else { R.paused = true; R.pauseStart = now; unlockScreen(); }
   vib(30); saveActive(); render();
   if (NATIVE) NATIVE.live.update(liveState());
@@ -970,28 +989,34 @@ function drawSegs(){
   for (var i = 0; i < n; i++) h += '<line class="seg-on ' + (i*M/SEGN >= S.limit ? 'r' : 'a') + '" ' + GEO[i] + '/>';
   $('#segLit').innerHTML = h;
 }
-function stepDial(){
-  dialRaf = 0;
-  var d = dialTarget - dialV;
-  dialV = Math.abs(d) < 0.05 ? dialTarget : dialV + d*0.16;
-  drawSegs();
-  if (dialV !== dialTarget) dialRaf = requestAnimationFrame(stepDial);
+// The speed number and the ring glide together from one GPS reading to the next.
+var numFrom = 0, numTo = 0, numStart = 0, numRaf = 0, numDash = false, NUM_MS = 850;
+function paintNum(){ $('#speed').textContent = numDash ? '\u2013' : Math.round(dialV); drawSegs(); }
+function stepNum(now){
+  numRaf = 0;
+  var p = Math.min(1, Math.max(0, (now - numStart)/NUM_MS)), e = 1 - Math.pow(1 - p, 3);
+  dialV = numFrom + (numTo - numFrom)*e;
+  paintNum();
+  if (p < 1) numRaf = requestAnimationFrame(stepNum);
 }
 function setDialTarget(v){
-  dialTarget = v;
-  if (reduceMotion || document.hidden){ dialV = v; drawSegs(); return; }
-  if (!dialRaf) dialRaf = requestAnimationFrame(stepDial);
+  if (Math.abs(v - numTo) < 0.01 && (numRaf || Math.abs(dialV - v) < 0.01)) return;
+  numTo = v;
+  if (reduceMotion || document.hidden){ if (numRaf){ cancelAnimationFrame(numRaf); numRaf = 0; } dialV = v; paintNum(); return; }
+  numFrom = dialV; numStart = performance.now();
+  if (!numRaf) numRaf = requestAnimationFrame(stepNum);
 }
 
 /* ================= render ================= */
 function render(){
   var fresh = G.wall && Date.now() - G.wall < 10000;
-  var v = fresh ? conv(G.smooth) : 0, shown = Math.round(v);
-  var sp = $('#speed');
-  sp.textContent = fresh ? shown : (G.state === 'off' ? '0' : '\u2013');
-  sp.classList.toggle('stale', !fresh || Date.now() - G.wall > 4000);
+  var live = !!(R && fresh);                     // speed only shows once Start ride is pressed
+  var v = live ? conv(G.smooth) : 0, shown = Math.round(v);
+  var dash = !!(R && !fresh);
+  if (dash !== numDash){ numDash = dash; paintNum(); }
+  $('#speed').classList.toggle('stale', !live || Date.now() - G.wall > 4000);
   setDialTarget(v);
-  document.body.classList.toggle('is-over', !!(fresh && shown > S.limit));
+  document.body.classList.toggle('is-over', live && shown > S.limit);
 
   var pk = $('#peakMark');
   if (R && R.max > 0.5){ var pp = pt(angOf(conv(R.max)), RA - 15); pk.setAttribute('cx', pp[0].toFixed(1)); pk.setAttribute('cy', pp[1].toFixed(1)); pk.setAttribute('visibility', 'visible'); }
@@ -1050,7 +1075,7 @@ function setSim(on){
   if (on === G.simOn) return;
   var wasRunning = G.wanted || !!R;
   gpsHalt(); G.simOn = on;
-  if (R){ R.anchor = null; R.lastT = null; R.lastFix = null; }
+  if (R){ R.anchor = null; R.lastT = null; R.lastFix = null; R.prevRaw = null; R.lastDopV = null; }
   if (wasRunning || on) gpsStart(); else setGps('off');
   syncSettingsUI(); render();
 }
