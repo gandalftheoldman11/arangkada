@@ -1,0 +1,55 @@
+name: Unpack Arangkada
+
+# One-time helper. arangkada-src.tar.xz (uploaded through the website) holds the source code;
+# images and the Gradle wrapper are rebuilt here so the upload stays small.
+# Workflow files are uploaded separately because workflows can't change other workflow files.
+# When it finishes it starts the Android and iPhone builds.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Replace project files with the upload
+        run: |
+          test -f arangkada-src.tar.xz || { echo "arangkada-src.tar.xz not found in the repository root"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/src" && tar -xJf arangkada-src.tar.xz -C "$RUNNER_TEMP/src"
+          test -f "$RUNNER_TEMP/src/package.json" || { echo "Unexpected archive layout"; exit 1; }
+          # Keep git data and workflows; replace everything else
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+          rm -rf "$RUNNER_TEMP/src/.github"
+          cp -a "$RUNNER_TEMP/src/." .
+          chmod +x android/gradlew
+
+      - name: Draw icons and splash screens
+        run: |
+          python3 -m pip install --quiet pillow
+          python3 scripts/make-images.py
+
+      - name: Add the Gradle wrapper (official, checksum verified)
+        run: |
+          mkdir -p android/gradle/wrapper
+          curl -sSfL -o android/gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.11.1/gradle/wrapper/gradle-wrapper.jar
+          echo "2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046  android/gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+
+      - name: Commit
+        run: |
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Arangkada: website, Android and iPhone app" || echo "Nothing to commit"
+          git push
+
+      - name: Start the Android and iPhone builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run android-apk.yml --ref "${{ github.ref_name }}"
+          gh workflow run ios-app.yml --ref "${{ github.ref_name }}"
