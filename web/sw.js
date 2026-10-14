@@ -1,5 +1,5 @@
 // Arangkada service worker: works offline after the first visit.
-const CACHE = 'arangkada-v4';
+const CACHE = 'arangkada-v5';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
