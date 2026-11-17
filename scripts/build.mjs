@@ -2,6 +2,7 @@
 // Used by Netlify (website) and by Capacitor (Android and iPhone apps).
 import { build } from 'esbuild';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import './patch-native.mjs';   // faster native GPS settings
 
 rmSync('www', { recursive: true, force: true });
 mkdirSync('www');
